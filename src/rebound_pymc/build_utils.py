@@ -34,8 +34,13 @@ def get_cache_version():
 
 def get_header_dirs():
     this_path = os.path.dirname(os.path.abspath(__file__))
-    rebound_path = os.path.dirname(os.path.abspath(rebound.__file__))
-    return [this_path, rebound_path]
+    pkg = os.path.dirname(os.path.abspath(rebound.__file__))
+    site = os.path.dirname(pkg)
+    # REBOUND 4.x ships rebound.h inside the package; 5.x moved it to a
+    # sibling src/ dir. Return whichever directory actually holds the header.
+    hdr = [d for d in (pkg, os.path.join(site, "src"), site)
+           if os.path.exists(os.path.join(d, "rebound.h"))]
+    return [this_path] + (hdr or [pkg])
 
 
 def get_librebound_path():
