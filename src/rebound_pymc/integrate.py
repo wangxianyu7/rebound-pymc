@@ -4,7 +4,7 @@ from __future__ import division, print_function
 
 __all__ = ["IntegrateOp"]
 
-import pkg_resources
+import os
 
 import numpy as np
 
@@ -30,6 +30,11 @@ class IntegrateOp(ExternalCOp):
         integrator=aesara.scalar.int32,
     )
     __props__ = ("t", "dt", "integrator")
+    # Integrators that do NOT support REBOUND variational equations, which this
+    # op always requires (it adds variational particles for the Jacobian). In
+    # REBOUND 4.x these call exit() mid-integration, killing the interpreter, so
+    # reject them up front with a catchable error.
+    _NO_VARIATIONAL = {"mercurius"}
     func_file = "./integrate.cc"
     func_name = "APPLY_SPECIFIC(integrate)"
     _INTEGRATORS = {
@@ -45,6 +50,13 @@ class IntegrateOp(ExternalCOp):
     def __init__(self, t=0.0, dt=0.1, integrator="ias15", **kwargs):
         self.t = float(t)
         self.dt = float(dt)
+        if integrator.lower() in self._NO_VARIATIONAL:
+            raise ValueError(
+                "integrator {0!r} does not support REBOUND variational "
+                "equations, which this op requires for gradients".format(
+                    integrator
+                )
+            )
         self.integrator = self._INTEGRATORS.get(integrator.lower(), None)
         if self.integrator is None:
             raise ValueError("unknown integrator {0}".format(integrator))
@@ -64,9 +76,7 @@ class IntegrateOp(ExternalCOp):
         ]
 
     def c_header_dirs(self, c_compiler):
-        return [
-            pkg_resources.resource_filename(__name__, "")
-        ] + get_header_dirs()
+        return [os.path.dirname(os.path.abspath(__file__))] + get_header_dirs()
 
     def c_compile_args(self, c_compiler):
         return get_compile_args(c_compiler)

@@ -11,8 +11,6 @@ __all__ = [
 import os
 import sys
 import sysconfig
-import pkg_resources
-
 import rebound
 
 from .rebound_pymc_version import __version__
@@ -35,16 +33,8 @@ def get_cache_version():
 
 
 def get_header_dirs():
-    this_path = os.path.dirname(
-        os.path.abspath(
-            pkg_resources.resource_filename(__name__, "theano_helpers.h")
-        )
-    )
-    rebound_path = os.path.dirname(
-        os.path.abspath(
-            pkg_resources.resource_filename("rebound", "rebound.h")
-        )
-    )
+    this_path = os.path.dirname(os.path.abspath(__file__))
+    rebound_path = os.path.dirname(os.path.abspath(rebound.__file__))
     return [this_path, rebound_path]
 
 

@@ -29,7 +29,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install -U pip
-          python -m pip install "pymc>=5" "pytensor>=2.18" "rebound>=4" reboundx "exoplanet>=0.6" "numpy<2" pytest
+          python -m pip install "pymc>=5" "pytensor>=2.20" "rebound>=4" reboundx "exoplanet>=0.6" "numpy<2" pytest
           python -m pip install -e . --no-build-isolation --no-deps
 
       - name: Get compiledir
