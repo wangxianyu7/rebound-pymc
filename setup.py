@@ -61,6 +61,7 @@ if __name__ == "__main__":
         packages=PACKAGES,
         package_dir={"": "src"},
         include_package_data=True,
+        package_data={"rebound_pymc": ["*.cc", "*.h", "*.py"]},
         install_requires=INSTALL_REQUIRES,
         classifiers=CLASSIFIERS,
         zip_safe=False,

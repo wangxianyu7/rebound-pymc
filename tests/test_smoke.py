@@ -1,7 +1,6 @@
 """Smoke test: does the ported rebound-pymc (pytensor + rebound 4.x) compile & run,
 and does the C IntegrateOp match a direct rebound integration?  env: normal."""
 import sys, os, numpy as np
-sys.path.insert(0, "/Users/wangxianyu/Program/Github/rebound-pymc/src")
 import pytensor, pytensor.tensor as pt
 import rebound
 
