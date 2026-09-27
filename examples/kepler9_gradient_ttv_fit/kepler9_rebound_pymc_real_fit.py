@@ -21,15 +21,20 @@ from scipy.optimize import least_squares
 from rebound_pymc.integrate import IntegrateOp
 from jacobi_ic import barycentric_coords0
 
-# Two working configs, both reproduce Borsato 2019 from a deliberately-off seed:
-#   * FAST (default): INTEG=whfast, DT=0.01, JAC=2-point  -> ~10 s. whfast forward is ~30x
-#     faster than ias15; a numeric Jacobian over that fast model stays self-consistent and
-#     converges in ~44 TRF iters.
-#   * ANALYTIC: INTEG=ias15, JAC=analytic -> ~58 s. Uses rebound-pymc's analytic N-body
-#     Jacobian (the IntegrateOp jac OUTPUT contracted with a numeric Kepler-IC jacobian;
-#     jaccheck 1.0000). NOTE: whfast's variational (analytic) Jacobian is NOT self-consistent
-#     with its forward map and stalls TRF, so analytic requires ias15.
-JAC = os.environ.get("JAC", "2-point")
+# Configs (all reproduce Borsato 2019 from a deliberately-off seed):
+#   * bsjac (DEFAULT): INTEG=whfast forward + BS analytic Jacobian -> ~1.5 s. Fastest AND
+#     fully-analytic/correct. whfast gives the fast residuals; BS (Gragg-Bulirsch-Stoer)
+#     supplies the analytic N-body Jacobian for ALL columns -- BS integrates in inertial
+#     coords (like ias15) so its mass variations are correct, unlike whfast, and it is ~5x
+#     faster than ias15 (op-level jaccheck: BS mass&coord relerr ~1e-3 vs whfast's 117 on mass).
+#   * hybrid: INTEG=whfast, JAC=hybrid -> ~2.4 s. Analytic for 8 non-mass cols + finite-diff
+#     the 2 mass cols (avoids the whfast mass bug without BS).
+#   * analytic: INTEG=bs or ias15, JAC=analytic -> ~5.4 s (bs) / ~58 s (ias15). Fully analytic.
+#   * 2-point: JAC=2-point -> ~4.3 s (whfast). Fully numeric.
+# WHFast caveat: its variational Jacobian is exact for coordinate derivatives but WRONG for
+# d/d(mass) -- a REBOUND-internal limitation (whfast integrates in Jacobi coords; mass enters
+# the transform). dt-independent. Hence BS or ias15 for a fully-analytic mass Jacobian.
+JAC = os.environ.get("JAC", "bsjac")
 
 DPY = 58.13244087623439           # day per (yr/2pi); makes G=1 in AU,Msun
 MEARTH = 3.0027e-6; MJUP = 9.545942e-4
@@ -82,6 +87,16 @@ _xs = _out[row, plan + 1, 0] - _out[row, 0, 0]
 _vx = (_out[row, plan + 1, 3] - _out[row, 0, 3]) / DPY
 f_oj = pytensor.function([mv, cv, tv], [_xs, _vx, _jac])    # x_sky, vx_sky, full N-body jac
 
+# BS variational Jacobian: BS integrates in inertial coords (like ias15), so unlike whfast
+# its mass variations are CORRECT (op-level jaccheck: mass & coord relerr ~1e-3 vs whfast's
+# 117 on mass). ~5x faster than ias15. Used for a fully-analytic Jacobian while the fast
+# whfast forward supplies the residuals (JAC=bsjac).
+op_bs = IntegrateOp(t=0.0, dt=0.05, integrator="bs")
+_ob, _jb = op_bs(mv, cv, tv)
+f_oj_bs = pytensor.function([mv, cv, tv],
+                            [_ob[row, plan+1, 0] - _ob[row, 0, 0],
+                             (_ob[row, plan+1, 3] - _ob[row, 0, 3]) / DPY, _jb])
+
 def split(theta): Z = f_z(theta); return Z[:, 0].copy(), Z[:, 1:].copy()
 
 nfev = [0]
@@ -102,13 +117,30 @@ def ic_jac(theta, h=1e-7):                                  # numeric dz/dtheta 
         d = np.zeros(10); d[i] = h
         J[:, i] = (f_z(theta + d).reshape(-1) - f_z(theta - d).reshape(-1)) / (2*h)
     return J
-def res_jac(theta):
+def res_jac(theta, oj=f_oj):
     t = t_model(theta); m, c = split(theta)
-    x, v, J = f_oj(m, c, (t - t_start) / DPY)              # J: (N,3,7,3,6)
+    x, v, J = oj(m, c, (t - t_start) / DPY)                # J: (N,3,7,3,6)
     dxdz = np.stack([J[k, :, :, plan[k]+1, 0] - J[k, :, :, 0, 0]
                      for k in range(len(t))], axis=0).reshape(len(t), 21)  # d xsky/d z
     dxdtheta = dxdz @ ic_jac(theta)                        # (N,10)
     return -(dxdtheta / v[:, None]) / sig[:, None]         # (N,10) d resid/d theta
+def res_jac_bsjac(theta):                                  # whfast residuals + BS analytic jac (all cols)
+    return res_jac(theta, oj=f_oj_bs)
+
+# HYBRID: analytic for all columns except the 2 mass params (theta[0],theta[1]).
+# WHFast's variational eqns are wrong ONLY for d/d(mass) (verified: coord-derivs exact,
+# mass-derivs relerr>1 regardless of dt -- a REBOUND-internal limitation of the whfast
+# mass variation, not fixable from rebound-pymc). Analytic columns 2-9 (e,P,tic) don't
+# touch the mass variation (ic_jac mass-rows are 0 there), so they stay exact; only the
+# 2 mass columns are recomputed by finite difference. ~3 integrations/jac vs ~11 numeric.
+MASS_COLS = [0, 1]
+def res_jac_hybrid(theta):
+    Jm = res_jac(theta)                                    # analytic; cols 2-9 exact under whfast
+    r0 = res_fn(theta)
+    for i in MASS_COLS:
+        h = 1e-6; d = np.zeros(10); d[i] = h
+        Jm[:, i] = (res_fn(theta + d) - r0) / h            # forward diff for mass column
+    return Jm
 
 # ---- fit: seed P/tic from data linear ephemeris; masses & ecc OFF --------
 def lin_eph(N, t):
@@ -121,7 +153,8 @@ seed = np.array([np.log(80*MEARTH), np.log(60*MEARTH),  # masses ~2x Borsato (OF
 lo = np.array([np.log(1e-6), np.log(1e-6), -.3,-.3,-.3,-.3, Pb_d*0.97, Pc_d*0.97, t0b-0.6, t0c-0.6])
 hi = np.array([np.log(6e-4), np.log(6e-4),  .3, .3, .3, .3, Pb_d*1.03, Pc_d*1.03, t0b+0.6, t0c+0.6])
 
-JAC_ARG = res_jac if JAC == "analytic" else "2-point"  # analytic = rebound-pymc N-body jacobian
+JAC_ARG = {"analytic": res_jac, "hybrid": res_jac_hybrid,
+           "bsjac": res_jac_bsjac}.get(JAC, "2-point")
 print(f"# {len(t_obs)} transits (b={len(tb)},c={len(tc)}); JAC={JAC}; seed chi2={chi2_fn(seed):.1f}", flush=True)
 t0 = time.time()
 sol = least_squares(res_fn, seed, jac=JAC_ARG, bounds=(lo, hi), method="trf",

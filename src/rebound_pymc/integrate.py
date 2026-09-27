@@ -45,6 +45,7 @@ class IntegrateOp(ExternalCOp):
         "none": 7,
         "janus": 8,
         "mercurius": 9,
+        "bs": 12,
     }
 
     def __init__(self, t=0.0, dt=0.1, integrator="ias15", **kwargs):

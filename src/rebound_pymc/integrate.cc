@@ -67,6 +67,9 @@ int APPLY_SPECIFIC(integrate)(
   case (9):
     sim->integrator = reb_simulation::REB_INTEGRATOR_MERCURIUS;
     break;
+  case (12):
+    sim->integrator = reb_simulation::REB_INTEGRATOR_BS;
+    break;
 
   default:
     PyErr_Format(PyExc_ValueError, "unknown integrator");
