@@ -65,7 +65,10 @@ class IntegrateOp(ExternalCOp):
         super().__init__(self.func_file, self.func_name)
 
     def c_code_cache_version(self):
-        return get_cache_version()
+        # trailing component bumped on integrate.cc changes so pytensor
+        # recompiles instead of using a stale cached module.
+        # (1,) = WHFAST mass-variational central-FD correction.
+        return get_cache_version() + (1,)
 
     def c_headers(self, c_compiler):
         return [
@@ -74,6 +77,7 @@ class IntegrateOp(ExternalCOp):
             "array",
             "numeric",
             "algorithm",
+            "cmath",
         ]
 
     def c_header_dirs(self, c_compiler):
